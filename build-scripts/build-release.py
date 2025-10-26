@@ -1133,19 +1133,23 @@ class Releaser:
                     f.write(f"dep-{dep.lower()}-version={dep_version}\n")
 
     def verify_dependencies(self):
-        for dep, depinfo in self.release_info.get("dependencies", {}).items():
-            if "mingw" in self.release_info:
-                mingw_matches = glob.glob(self.release_info["mingw"]["dependencies"][dep]["artifact"], root_dir=self.deps_path)
-                assert len(mingw_matches) == 1, f"Exactly one archive matches mingw {dep} dependency: {mingw_matches}"
-            if "dmg" in self.release_info:
-                dmg_matches = glob.glob(self.release_info["dmg"]["dependencies"][dep]["artifact"], root_dir=self.deps_path)
-                assert len(dmg_matches) == 1, f"Exactly one archive matches dmg {dep} dependency: {dmg_matches}"
-            if "msvc" in self.release_info:
-                msvc_matches = glob.glob(self.release_info["msvc"]["dependencies"][dep]["artifact"], root_dir=self.deps_path)
-                assert len(msvc_matches) == 1, f"Exactly one archive matches msvc {dep} dependency: {msvc_matches}"
-            if "android" in self.release_info:
-                android_matches = glob.glob(self.release_info["android"]["dependencies"][dep]["artifact"], root_dir=self.deps_path)
-                assert len(android_matches) == 1, f"Exactly one archive matches msvc {dep} dependency: {android_matches}"
+        def verify_action_dependency(action: str, dep_name: str, action_dependency: dict):
+            action_matches = glob.glob(action_dependency["artifact"], root_dir=self.deps_path)
+            assert len(action_matches) == 1, f"Exactly one archive matches {action} {dep_name} dependency: {action_matches}"
+
+        def verify_action_dependencies(action: str, dep_name: str):
+            if action not in self.release_info:
+                return
+            action_deps = self.release_info[action]["dependencies"][dep_name]
+            assert isinstance(action_deps, list)
+            for action_dep in action_deps:
+                verify_action_dependency(action, dep_name, action_dep)
+
+        for dep in self.release_info.get("dependencies", {}).keys():
+            verify_action_dependencies("mingw", dep)
+            verify_action_dependencies("dmg", dep)
+            verify_action_dependencies("msvc", dep)
+            verify_action_dependencies("android", dep)
 
     @staticmethod
     def _arch_to_vs_platform(arch: str, configuration: str="Release") -> VsArchPlatformConfig:
@@ -1165,14 +1169,20 @@ class Releaser:
             deps_path = self.root / "msvc-deps"
             shutil.rmtree(deps_path, ignore_errors=True)
             dep_roots = []
-            for dep, depinfo in self.release_info["msvc"].get("dependencies", {}).items():
-                dep_extract_path = deps_path / f"extract-{dep}"
-                msvc_zip = self.deps_path / glob.glob(depinfo["artifact"], root_dir=self.deps_path)[0]
-                with zipfile.ZipFile(msvc_zip, "r") as zf:
-                    zf.extractall(dep_extract_path)
-                contents_msvc_zip = glob.glob(str(dep_extract_path / "*"))
-                assert len(contents_msvc_zip) == 1, f"There must be exactly one root item in the root directory of {dep}"
-                dep_roots.append(contents_msvc_zip[0])
+            for dep, depinfos in self.release_info["msvc"].get("dependencies", {}).items():
+                for depinfo_i, depinfo in enumerate(depinfos):
+                    dep_extract_path = deps_path / f"extract-{dep}-{depinfo_i}"
+                    msvc_zip = self.deps_path / glob.glob(depinfo["artifact"], root_dir=self.deps_path)[0]
+                    with zipfile.ZipFile(msvc_zip, "r") as zf:
+                        zf.extractall(dep_extract_path)
+                    contents_msvc_zip = glob.glob(str(dep_extract_path / "*"))
+                    if len(contents_msvc_zip) > 1:
+                        dep_roots.append(contents_msvc_zip[0])
+                    else:
+                        dep_roots.append(dep_extract_path)
+
+            for arch in self.release_info["msvc"].get("cmake", {}).get("archs", []):
+                self._build_msvc_cmake(arch_platform=self._arch_to_vs_platform(arch=arch), dep_roots=dep_roots)
 
         with self.section_printer.group("Create SDL VC development zip"):
             self._build_msvc_devel()
@@ -1263,13 +1273,83 @@ class Releaser:
     def _arch_platform_to_install_path(self, arch_platform: VsArchPlatformConfig) -> Path:
         return self._arch_platform_to_build_path(arch_platform) / "prefix"
 
+    def _build_msvc_cmake(self, arch_platform: VsArchPlatformConfig, dep_roots: list[Path]):
+        build_path = self._arch_platform_to_build_path(arch_platform)
+        install_path = self._arch_platform_to_install_path(arch_platform)
+        platform_context = self.get_context(extra_context=arch_platform.extra_context())
+
+        build_type = "Release"
+        extra_context = {
+            "ARCH": arch_platform.arch,
+            "PLATFORM": arch_platform.platform,
+        }
+
+        built_paths = set(install_path / configure_text(f, context=platform_context) for file_mapping in (self.release_info["msvc"]["cmake"]["files-lib"], self.release_info["msvc"]["cmake"]["files-devel"]) for files_list in file_mapping.values() for f in files_list)
+        logger.info("CMake builds these files, to be included in the package: %s", built_paths)
+        if not self.fast:
+            for b in built_paths:
+                b.unlink(missing_ok=True)
+
+        shutil.rmtree(install_path, ignore_errors=True)
+        build_path.mkdir(parents=True, exist_ok=True)
+        with self.section_printer.group(f"Configure VC CMake project for {arch_platform.arch}"):
+            self.executer.run([
+                "cmake", "-S", str(self.root), "-B", str(build_path),
+                "-A", arch_platform.platform,
+                "-DCMAKE_INSTALL_BINDIR=bin",
+                "-DCMAKE_INSTALL_DATAROOTDIR=share",
+                "-DCMAKE_INSTALL_INCLUDEDIR=include",
+                "-DCMAKE_INSTALL_LIBDIR=lib",
+                f"-DCMAKE_BUILD_TYPE={build_type}",
+                f"-DCMAKE_INSTALL_PREFIX={install_path}",
+                # MSVC debug information format flags are selected by an abstraction
+                "-DCMAKE_POLICY_DEFAULT_CMP0141=NEW",
+                # MSVC debug information format
+                "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=ProgramDatabase",
+                # Linker flags for executables
+                "-DCMAKE_EXE_LINKER_FLAGS=-INCREMENTAL:NO -DEBUG -OPT:REF -OPT:ICF",
+                # Linker flag for shared libraries
+                "-DCMAKE_SHARED_LINKER_FLAGS=-INCREMENTAL:NO -DEBUG -OPT:REF -OPT:ICF",
+                # MSVC runtime library flags are selected by an abstraction
+                "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+                # Use statically linked runtime (-MT) (ideally, should be "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+                "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+                f"-DCMAKE_PREFIX_PATH={';'.join(str(s) for s in dep_roots)}",
+            ] + self.release_info["msvc"]["cmake"]["args"] + ([] if self.fast else ["--fresh"]))
+
+        with self.section_printer.group(f"Build VC CMake project for {arch_platform.arch}"):
+            self.executer.run(["cmake", "--build", str(build_path), "--verbose", "--config", build_type])
+        with self.section_printer.group(f"Install VC CMake project for {arch_platform.arch}"):
+            self.executer.run(["cmake", "--install", str(build_path), "--config", build_type])
+
+        if self.dry:
+            for b in built_paths:
+                b.parent.mkdir(parents=True, exist_ok=True)
+                b.touch()
+
+        zip_path = self.dist_path / f"{self.project}-{self.version}-win32-{arch_platform.arch}.zip"
+        zip_path.unlink(missing_ok=True)
+
+        logger.info("Collecting files...")
+        archive_file_tree = ArchiveFileTree()
+        archive_file_tree.add_file_mapping(arc_dir="", file_mapping=self.release_info["msvc"]["cmake"]["files-lib"], file_mapping_root=install_path, context=platform_context, time=self.arc_time)
+        archive_file_tree.add_file_mapping(arc_dir="", file_mapping=self.release_info["msvc"]["files-lib"], file_mapping_root=self.root, context=self.get_context(extra_context=extra_context), time=self.arc_time)
+
+        logger.info("Creating %s", zip_path)
+        with Archiver(zip_path=zip_path) as archiver:
+            arc_root = f""
+            archive_file_tree.add_to_archiver(archive_base=arc_root, archiver=archiver)
+            archiver.add_git_hash(arcdir=arc_root, commit=self.commit, time=self.arc_time)
+
+        for p in built_paths:
+            assert p.is_file(), f"{p} should exist"
+
     def _build_msvc_devel(self) -> None:
         zip_path = self.dist_path / f"{self.project}-devel-{self.version}-VC.zip"
         arc_root = f"{self.project}-{self.version}"
 
         def copy_files_devel(ctx):
             archive_file_tree.add_file_mapping(arc_dir=arc_root, file_mapping=self.release_info["msvc"]["files-devel"], file_mapping_root=self.root, context=ctx, time=self.arc_time)
-
 
         logger.info("Collecting files...")
         archive_file_tree = ArchiveFileTree()

@@ -5,10 +5,6 @@
     "SDL2": {
       "startswith": "2.",
       "repo": "libsdl-org/sdl2-compat"
-    },
-    "SDL3": {
-      "startswith": "3.2.",
-      "repo": "libsdl-org/SDL"
     }
   },
   "version": {
@@ -41,18 +37,15 @@
       "files-lib": {
         "": [
           "bin/SDL.dll",
-          "bin/SDL2.dll",
-          "bin/SDL3.dll"
+          "@<@ARCH@>@/SDL2.dll",
+          "@<@ARCH@>@/SDL3.dll"
         ]
       },
       "files-devel": {
         "lib/@<@ARCH@>@": [
           "bin/SDL.dll",
-          "bin/SDL2.dll",
-          "bin/SDL3.dll",
-          "bin/SDL.pdb",
-          "bin/SDL2.pdb",
-          "bin/SDL3.pdb",
+          "@<@ARCH@>@/SDL2.dll",
+          "@<@ARCH@>@/SDL3.dll",
           "lib/SDL.lib",
           "lib/SDLmain.lib"
         ]
@@ -76,14 +69,43 @@
       ]
     },
     "dependencies": {
-      "SDL2": {
-        "artifact": [ "sdl2-compat-*-win32-x86.zip",
-                      "sdl2-compat-*-win32-x64.zip"
-        ]
-      },
-      "SDL3": {
-        "artifact": "SDL3-devel-*-VC.zip"
-      }
+      "SDL2": [
+        {
+          "artifact": "sdl2-compat-2.??.??.zip",
+          "copy": [
+            {
+              "src": "*/include/SDL2/*",
+              "dst": "sdl2-headers/SDL2"
+            }
+          ]
+        },
+        {
+          "artifact": "sdl2-compat-*-win32-x86.zip",
+          "copy": [
+            {
+              "src": "SDL2.dll",
+              "dst": "x86/SDL2.dll"
+            },
+            {
+              "src": "SDL3.dll",
+              "dst": "x86/SDL3.dll"
+            }
+          ]
+        },
+        {
+          "artifact": "sdl2-compat-*-win32-x64.zip",
+          "copy": [
+            {
+              "src": "SDL2.dll",
+              "dst": "x64/SDL2.dll"
+            },
+            {
+              "src": "SDL3.dll",
+              "dst": "x64/SDL3.dll"
+            }
+          ]
+        }
+      ]
     }
   }
 }

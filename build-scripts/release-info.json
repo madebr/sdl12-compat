@@ -36,7 +36,7 @@
       ],
       "files-lib": {
         "": [
-          "bin/SDL.dll",
+          "bin/SDL.dll"
         ]
       },
       "files-devel": {

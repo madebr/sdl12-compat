@@ -1177,9 +1177,9 @@ class Releaser:
                         zf.extractall(dep_extract_path)
                     contents_msvc_zip = glob.glob(str(dep_extract_path / "*"))
                     if len(contents_msvc_zip) > 1:
-                        dep_roots.append(contents_msvc_zip[0])
-                    else:
                         dep_roots.append(dep_extract_path)
+                    else:
+                        dep_roots.append(contents_msvc_zip[0])
 
             for arch in self.release_info["msvc"].get("cmake", {}).get("archs", []):
                 self._build_msvc_cmake(arch_platform=self._arch_to_vs_platform(arch=arch), dep_roots=dep_roots)

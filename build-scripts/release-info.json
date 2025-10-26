@@ -37,15 +37,11 @@
       "files-lib": {
         "": [
           "bin/SDL.dll",
-          "@<@ARCH@>@/SDL2.dll",
-          "@<@ARCH@>@/SDL3.dll"
         ]
       },
       "files-devel": {
         "lib/@<@ARCH@>@": [
           "bin/SDL.dll",
-          "@<@ARCH@>@/SDL2.dll",
-          "@<@ARCH@>@/SDL3.dll",
           "lib/SDL.lib",
           "lib/SDLmain.lib"
         ]
@@ -55,7 +51,9 @@
       "": [
         "build-scripts/pkg-support/msvc/@<@ARCH@>@/INSTALL.md.in:INSTALL.md",
         "LICENSE.txt",
-        "build-scripts/pkg-support/msvc/README.md"
+        "build-scripts/pkg-support/msvc/README.md",
+        "@<@ARCH@>@/SDL2.dll",
+        "@<@ARCH@>@/SDL3.dll"
       ]
     },
     "files-devel": {
